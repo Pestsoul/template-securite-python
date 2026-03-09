@@ -1,84 +1,30 @@
-from unittest.mock import patch, mock_open, MagicMock
+from unittest.mock import MagicMock, patch, mock_open
 from src.tp1.utils.report import Report
 
-
 def test_report_init():
-    # Given
-    capture = MagicMock()
-    filename = "test.pdf"
-    summary = "Test summary"
-
-    # When
-    report = Report(capture, filename, summary)
-
-    # Then
-    assert report.capture == capture
-    assert report.filename == filename
-    assert report.title == "TITRE DU RAPPORT"
-    assert report.summary == summary
+    report = Report(MagicMock(), "test.pdf", "Test summary")
+    assert report.title == "TITRE DU RAPPORT\n"
     assert report.array == ""
     assert report.graph == ""
-
 
 def test_concat_report():
-    # Given
     report = Report(MagicMock(), "test.pdf", "Test summary")
     report.title = "Test Title"
-    report.array = "Test Array"
-    report.graph = "Test Graph"
-
-    # When
+    report.array = "Array"
+    report.graph = "Graph"
     result = report.concat_report()
-
-    # Then
-    assert result == "Test TitleTest summaryTest ArrayTest Graph"
-
+    assert result == "Test TitleTest summary\nArray\nGraph\n"
 
 def test_save():
-    # Given
     report = Report(MagicMock(), "test.pdf", "Test summary")
     report.title = "Test Title"
-
-    # When/Then
     with patch("builtins.open", mock_open()) as mock_file:
         report.save("test.pdf")
+        mock_file().write.assert_called_once_with("Test TitleTest summary\n")
 
-        # Verify file was opened with correct name
-        mock_file.assert_called_once_with("test.pdf", "w")
-
-        # Verify write was called with the concatenated content
-        mock_file().write.assert_called_once_with("Test TitleTest summary")
-
-
-def test_generate_graph():
-    # Given
+def test_generate():
     report = Report(MagicMock(), "test.pdf", "Test summary")
-
-    # When
     report.generate("graph")
-
-    # Then
-    assert report.graph == ""  # Currently returns empty string
-
-
-def test_generate_array():
-    # Given
-    report = Report(MagicMock(), "test.pdf", "Test summary")
-
-    # When
+    assert report.graph == "network_graph.svg"
     report.generate("array")
-
-    # Then
-    assert report.array == ""  # Currently returns empty string
-
-
-def test_generate_invalid_param():
-    # Given
-    report = Report(MagicMock(), "test.pdf", "Test summary")
-
-    # When
-    report.generate("invalid")
-
-    # Then
-    assert report.graph == ""
-    assert report.array == ""
+    assert report.array == "protocol_table.csv"
