@@ -2,19 +2,13 @@
 
 # ------------------------ Fonctions de base ------------------------
 
+# Fonction de test hello world
 def hello_world() -> str:
-    """
-    Hello world function
-    :return: "hello world"
-    """
     return "hello world"
 
 
+# Demande à l'utilisateur de choisir une interface réseau, ens33 par défaut
 def choose_interface() -> str:
-    """
-    Return network interface and input user choice.
-    If empty input, return default 'ens33'
-    """
     try:
         iface = input("Choose interface (default ens33): ").strip()
         return iface if iface else "ens33"
@@ -22,22 +16,39 @@ def choose_interface() -> str:
         return "ens33"
 
 
+# ------------------------ Gestion de la durée ------------------------
+
+# Demande à l'utilisateur la durée de capture avec support des suffixes h/min/m/s
+def choose_duration() -> int:
+    try:
+        val = input("Capture duration (ex: 1h, 30min, 45s - default 1min): ").strip().lower()
+        if not val:
+            return 60
+        if val.endswith("h"):
+            return int(val[:-1]) * 3600
+        elif val.endswith("min"):
+            return int(val[:-3]) * 60
+        elif val.endswith("m"):
+            return int(val[:-1]) * 60
+        elif val.endswith("s"):
+            return int(val[:-1])
+        else:
+            return int(val) * 60  # sans suffixe = minutes par défaut
+    except (ValueError, Exception):
+        return 60
+
+
 # ------------------------ Gestion des protocoles ------------------------
 
-# Mapping des protocoles IP connus
+# Mapping des numéros de protocole IP vers leur nom lisible
 PROTO_MAP = {
     1: "ICMP",
     6: "TCP",
     17: "UDP",
-    # ajouter d'autres protocoles si nécessaire
 }
 
+# Convertit un numéro de protocole IP en nom lisible, retourne UNKNOWN si inconnu
 def proto_name(proto) -> str:
-    """
-    Convertit un numéro de protocole en nom lisible.
-    Si le protocole est inconnu, renvoie "UNKNOWN".
-    Gère également le cas spécial pour ARP.
-    """
     try:
         proto_int = int(proto)
         return PROTO_MAP.get(proto_int, "UNKNOWN")
