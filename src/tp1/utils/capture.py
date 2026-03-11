@@ -1,9 +1,11 @@
 # capture.py
 from collections import defaultdict
+import threading
+import time
 from scapy.all import sniff
-from scapy.layers.inet import IP, TCP, ICMP
+from scapy.layers.inet import IP, TCP
 from scapy.layers.l2 import ARP
-from tp1.utils.lib import choose_interface, choose_duration, proto_name
+from tp1.utils.lib import choose_interface, choose_duration, choose_packet_count, proto_name
 from tp1.utils.config import logger
 
 
@@ -12,89 +14,95 @@ class Capture:
     def __init__(self) -> None:
         self.interface = choose_interface() or "ens33"
         self.duration = choose_duration()
+        self.packet_count = choose_packet_count()  # 0 = illimité
         self.packets = []
-        self.protocol_counter = defaultdict(int)             # {proto: nb_paquets}
-        self.ip_packet_counter = defaultdict(int)            # {ip: total_packets}
-        self.ip_proto_map = defaultdict(set)                 # {ip: set of protocols}
-        self.ip_proto_counter = defaultdict(lambda: defaultdict(int))  # {ip: {proto: count}}
-        self.proto_suspicious = defaultdict(list)            # {proto: [alerts]}
+        self.protocol_counter = defaultdict(int)
+        self.ip_packet_counter = defaultdict(int)
+        self.ip_proto_map = defaultdict(set)
+        self.ip_proto_counter = defaultdict(lambda: defaultdict(int))
+        self.proto_suspicious = defaultdict(list)
         self.summary = ""
         self.suspicious = []
 
-    # Capture le trafic réseau sur l'interface choisie pendant la durée définie
-    def capture_traffic(self, packet_count: int = 100) -> None:
-        if self.duration >= 3600:
-            duration_str = f"{self.duration // 3600}h"
-        elif self.duration >= 60:
-            duration_str = f"{self.duration // 60}min"
+    # Traite un paquet IP : identifie le protocole et trace src/dst
+    def _handle_ip(self, packet) -> None:
+        proto = proto_name(packet[IP].proto)
+        self.protocol_counter[proto] += 1
+        src_ip, dst_ip = packet[IP].src, packet[IP].dst
+        for ip in (src_ip, dst_ip):
+            self.ip_packet_counter[ip] += 1
+            self.ip_proto_map[ip].add(proto)
+            self.ip_proto_counter[ip][proto] += 1
+
+    # Traite un paquet ARP : trace src/dst
+    def _handle_arp(self, packet) -> None:
+        self.protocol_counter["ARP"] += 1
+        src_ip, dst_ip = packet[ARP].psrc, packet[ARP].pdst
+        for ip in (src_ip, dst_ip):
+            self.ip_packet_counter[ip] += 1
+            self.ip_proto_map[ip].add("ARP")
+            self.ip_proto_counter[ip]["ARP"] += 1
+
+    # Détecte une injection SQL dans le payload TCP
+    def _detect_sqli(self, packet) -> None:
+        if not (hasattr(packet, "haslayer") and packet.haslayer(TCP)):
+            return
+        payload = getattr(packet[TCP], "payload", None)
+        if payload and b"SELECT" in str(payload).encode():
+            src = packet[IP].src if IP in packet else "Unknown"
+            alert = f"[TCP] SQLi detected from {src}"
+            self.suspicious.append(alert)
+            self.proto_suspicious["TCP"].append(alert)
+
+    # Détecte un ARP Spoofing : IP source == IP destination
+    def _detect_arp_spoof(self, packet) -> None:
+        if ARP in packet and packet[ARP].psrc == packet[ARP].pdst:
+            alert = f"[ARP] ARP Spoofing from MAC {packet[ARP].hwsrc} / IP {packet[ARP].psrc}"
+            self.suspicious.append(alert)
+            self.proto_suspicious["ARP"].append(alert)
+
+    # Traite chaque paquet capturé : routage + détections
+    def _packet_handler(self, packet) -> None:
+        self.packets.append(packet)
+        if IP in packet:
+            self._handle_ip(packet)
+        elif ARP in packet:
+            self._handle_arp(packet)
         else:
-            duration_str = f"{self.duration}s"
-        logger.info(f"Capturing traffic from interface {self.interface} for {duration_str}")
+            self.protocol_counter["UNKNOWN"] += 1
+        self._detect_sqli(packet)
+        self._detect_arp_spoof(packet)
 
-        def packet_handler(packet):
-            self.packets.append(packet)
-
-            # Paquet IP : on récupère le protocole et on trace src/dst
-            if IP in packet:
-                proto_num = packet[IP].proto
-                proto = proto_name(proto_num)
-                self.protocol_counter[proto] += 1
-
-                src_ip = packet[IP].src
-                dst_ip = packet[IP].dst
-                self.ip_packet_counter[src_ip] += 1
-                self.ip_packet_counter[dst_ip] += 1
-                self.ip_proto_map[src_ip].add(proto)
-                self.ip_proto_map[dst_ip].add(proto)
-                self.ip_proto_counter[src_ip][proto] += 1
-                self.ip_proto_counter[dst_ip][proto] += 1
-
-            # Paquet ARP : on trace les IPs source et destination
-            elif ARP in packet:
-                self.protocol_counter["ARP"] += 1
-                src_ip = packet[ARP].psrc
-                dst_ip = packet[ARP].pdst
-                self.ip_packet_counter[src_ip] += 1
-                self.ip_packet_counter[dst_ip] += 1
-                self.ip_proto_map[src_ip].add("ARP")
-                self.ip_proto_map[dst_ip].add("ARP")
-                self.ip_proto_counter[src_ip]["ARP"] += 1
-                self.ip_proto_counter[dst_ip]["ARP"] += 1
-
-            # Paquet non reconnu (ni IP ni ARP)
+    # Affiche le temps restant et le nombre de paquets en temps réel
+    def _display_progress(self, stop_event: threading.Event) -> None:
+        start = time.time()
+        while not stop_event.is_set():
+            elapsed = time.time() - start
+            remaining = max(0.0, float(self.duration) - elapsed)
+            pkt_count = len(self.packets)
+            if remaining >= 3600:
+                time_str = f"{int(remaining // 3600)}h{int((remaining % 3600) // 60)}min"
+            elif remaining >= 60:
+                time_str = f"{int(remaining // 60)}min{int(remaining % 60)}s"
             else:
-                self.protocol_counter["UNKNOWN"] += 1
+                time_str = f"{int(remaining)}s"
+            pkt_str = f"{pkt_count}/{self.packet_count}" if self.packet_count > 0 else str(pkt_count)
+            print(f"\rTemps restant: {time_str}  |  {pkt_str} packets   ", end="", flush=True)
+            time.sleep(0.5)
+        print()
 
-            # Détection ICMP : compté séparément car inclus dans IP
-            if ICMP in packet:
-                self.protocol_counter["ICMP"] += 1
-                if IP in packet:
-                    src_ip = packet[IP].src
-                    dst_ip = packet[IP].dst
-                    self.ip_packet_counter[src_ip] += 1
-                    self.ip_packet_counter[dst_ip] += 1
-                    self.ip_proto_map[src_ip].add("ICMP")
-                    self.ip_proto_map[dst_ip].add("ICMP")
-                    self.ip_proto_counter[src_ip]["ICMP"] += 1
-                    self.ip_proto_counter[dst_ip]["ICMP"] += 1
-
-            # Détection SQLi : on cherche SELECT dans le payload TCP
-            if hasattr(packet, "haslayer") and packet.haslayer(TCP):
-                payload = getattr(packet[TCP], "payload", None)
-                if payload and b"SELECT" in str(payload).encode():
-                    src = packet[IP].src if IP in packet else "Unknown"
-                    alert = f"[TCP] SQLi detected from {src}"
-                    self.suspicious.append(alert)
-                    self.proto_suspicious["TCP"].append(alert)
-
-            # Détection ARP Spoofing : l'IP source et destination sont identiques
-            if ARP in packet:
-                if packet[ARP].psrc == packet[ARP].pdst:
-                    alert = f"[ARP] ARP Spoofing from MAC {packet[ARP].hwsrc} / IP {packet[ARP].psrc}"
-                    self.suspicious.append(alert)
-                    self.proto_suspicious["ARP"].append(alert)
-
-        sniff(iface=self.interface, prn=packet_handler, count=packet_count, timeout=self.duration)
+    # Capture le trafic réseau : s'arrête à la durée OU au nombre de paquets max
+    def capture_traffic(self) -> None:
+        count_str = f"max {self.packet_count} packets" if self.packet_count > 0 else "unlimited packets"
+        logger.info(f"Capture sur {self.interface} ({count_str})")
+        stop_event = threading.Event()
+        thread = threading.Thread(target=self._display_progress, args=(stop_event,), daemon=True)
+        thread.start()
+        try:
+            sniff(iface=self.interface, prn=self._packet_handler, count=self.packet_count, timeout=self.duration)
+        finally:
+            stop_event.set()
+            thread.join()
 
     # Retourne les protocoles triés par nombre de paquets décroissant
     def sort_network_protocols(self) -> dict:
@@ -130,15 +138,13 @@ class Capture:
     def _gen_summary(self) -> str:
         summary = "=== IDS SUMMARY ===\n\n"
         summary += f"Interface: {self.interface}\n"
-        summary += f"Total packets captured: {len(self.packets)}\n\n"
-
-        summary += "Protocols detected:\n"
+        summary += f"Total packets capturé : {len(self.packets)}\n\n"
+        summary += "Protocols detecté :\n"
         summary += f"{'Protocol':<12} {'Packets':>8}\n"
         summary += "-" * 22 + "\n"
         for proto, count in self.sort_network_protocols().items():
             summary += f"{proto:<12} {count:>8}\n"
-
-        summary += "\nPackets per IP address:\n"
+        summary += "\nPackets par IP address:\n"
         summary += f"{'IP Address':<20} {'Packets':>8}  {'Protocols'}\n"
         summary += "-" * 50 + "\n"
         sorted_ips = sorted(self.ip_packet_counter.items(), key=lambda x: x[1], reverse=True)
@@ -147,11 +153,9 @@ class Capture:
                 f"{p}: {c}" for p, c in sorted(self.ip_proto_counter.get(ip, {}).items())
             )
             summary += f"{ip:<20} {count:>8}  {proto_details}\n"
-
         summary += "\nTraffic analysis:\n"
         if not self.suspicious:
             summary += "All traffic is legitimate.\n"
         else:
             summary += "\n".join(self.suspicious) + "\n"
-
         return summary

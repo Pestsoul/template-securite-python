@@ -1,6 +1,6 @@
 # test_lib.py
 from unittest.mock import patch
-from src.tp1.utils.lib import hello_world, choose_interface, choose_duration, proto_name
+from src.tp1.utils.lib import hello_world, choose_interface, choose_duration, choose_packet_count, proto_name
 
 
 def test_when_hello_world_then_return_hello_world():
@@ -54,3 +54,20 @@ def test_choose_duration_default():
 def test_choose_duration_invalid():
     with patch("builtins.input", return_value="abc"):
         assert choose_duration() == 60  # fallback 1 minute
+
+
+def test_choose_packet_count_value():
+    with patch("builtins.input", return_value="50"):
+        assert choose_packet_count() == 50
+
+def test_choose_packet_count_unlimited():
+    with patch("builtins.input", return_value="0"):
+        assert choose_packet_count() == 0
+
+def test_choose_packet_count_default():
+    with patch("builtins.input", return_value=""):
+        assert choose_packet_count() == 0
+
+def test_choose_packet_count_invalid():
+    with patch("builtins.input", return_value="abc"):
+        assert choose_packet_count() == 0

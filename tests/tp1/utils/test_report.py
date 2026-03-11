@@ -79,6 +79,22 @@ def test_save_pdf():
         os.unlink(tmp_path)
 
 
+def test_save_pdf_preview():
+    """Génère un PDF de prévisualisation dans le répertoire courant pour vérification manuelle."""
+    capture = _make_capture(
+        protocols={"TCP": 50, "UDP": 30, "ARP": 8, "ICMP": 2, "UNKNOWN": 10},
+        suspicious=["[ARP] ARP Spoofing from MAC AA:BB:CC:DD:EE:FF / IP 192.168.1.50"]
+    )
+    summary = (
+        "Interface: ens33\n"
+        "Total packets captured: 100\n"
+    )
+    report = Report(capture, "test_preview.pdf", summary)
+    report.save("test_preview.pdf")
+    assert os.path.exists("test_preview.pdf")
+    print("\n✅ PDF de prévisualisation généré : test_preview.pdf")
+
+
 def test_generate():
     capture = _make_capture()
     report = Report(capture, "test.pdf", "Test summary")

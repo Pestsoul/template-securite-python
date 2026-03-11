@@ -10,7 +10,7 @@ def hello_world() -> str:
 # Demande à l'utilisateur de choisir une interface réseau, ens33 par défaut
 def choose_interface() -> str:
     try:
-        iface = input("Choose interface (default ens33): ").strip()
+        iface = input("Choix interface (default ens33): ").strip()
         return iface if iface else "ens33"
     except Exception:
         return "ens33"
@@ -46,6 +46,15 @@ PROTO_MAP = {
     6: "TCP",
     17: "UDP",
 }
+
+# Demande à l'utilisateur le nombre maximum de paquets à capturer, 0 = illimité
+def choose_packet_count() -> int:
+    try:
+        val = input("Max packets à capturé (0 = unlimited, default 0): ").strip()
+        return int(val) if val else 0
+    except (ValueError, Exception):
+        return 0
+
 
 # Convertit un numéro de protocole IP en nom lisible, retourne UNKNOWN si inconnu
 def proto_name(proto) -> str:
